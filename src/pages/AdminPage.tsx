@@ -4,16 +4,18 @@ import { toast } from 'sonner'
 import { useApp } from '../context/AppContext'
 import DarkModeToggle from '../components/DarkModeToggle'
 import StatusBadge from '../components/StatusBadge'
-import {
-  getAllBookings, updateBookingStatus, deleteBooking, exportToCSV,
-  getCatalog, saveCatalog, resetCatalog, DEFAULT_CATALOG,
-} from '../lib/storage'
 import type { CatalogItem } from '../lib/types'
 import {
   buildCancellationMessage, buildCompletionMessage,
   getWaLink, buildBookingMessage,
 } from '../lib/whatsapp'
 import type { Booking, BookingStatus } from '../lib/types'
+import { db } from '../lib/firebase'
+import {
+  collection, getDocs, doc, updateDoc, deleteDoc,
+  onSnapshot, query, orderBy, where, addDoc
+} from 'firebase/firestore'
+import { DEFAULT_CATALOG, exportToCSV } from '../lib/storage'
 import {
   ShieldCheck, LogIn, LogOut, Search, Download, CheckCircle,
   XCircle, Trophy, Trash2, Eye, MessageCircle,
@@ -144,38 +146,49 @@ export default function AdminPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectAll, setSelectAll] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
+  const [loading, setLoading] = useState(false)
 
-  const loadData = useCallback(async () => {
-    try {
-      const data = await getAllBookings()
-      const sortedData = data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      setBookings(sortedData)
-      setLastRefresh(new Date())
-    } catch (error) {
-      console.error('Error loading bookings:', error)
-      toast.error('Gagal memuat data booking')
-    }
-  }, [])
-
-  useEffect(() => {
-    const loadInitialData = async () => {
-      if (adminLoggedIn) {
-        await loadData()
-        const catalogData = await getCatalog()
-        setCatalog(catalogData)
-      }
-    }
-    loadInitialData()
-  }, [adminLoggedIn, loadData])
-
-  // Auto refresh every 30 seconds
+  // Real-time listener for bookings
   useEffect(() => {
     if (!adminLoggedIn) return
-    const id = setInterval(() => {
-      loadData()
-    }, 30000)
-    return () => clearInterval(id)
-  }, [adminLoggedIn, loadData])
+
+    const bookingsRef = collection(db, 'bookings')
+    const q = query(bookingsRef, orderBy('createdAt', 'desc'))
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const bookingsData: Booking[] = []
+      querySnapshot.forEach((doc) => {
+        bookingsData.push({ id: doc.id, ...doc.data() } as Booking)
+      })
+      setBookings(bookingsData)
+      setLastRefresh(new Date())
+      setLoading(false)
+    }, (error) => {
+      console.error('Error listening to bookings:', error)
+      toast.error('Gagal memuat data booking')
+      setLoading(false)
+    })
+
+    return () => unsubscribe()
+  }, [adminLoggedIn])
+
+  // Real-time listener for catalog
+  useEffect(() => {
+    if (!adminLoggedIn) return
+
+    const catalogRef = collection(db, 'catalog')
+    const unsubscribe = onSnapshot(catalogRef, (querySnapshot) => {
+      const catalogData: CatalogItem[] = []
+      querySnapshot.forEach((doc) => {
+        catalogData.push(doc.data() as CatalogItem)
+      })
+      setCatalog(catalogData.length > 0 ? catalogData : DEFAULT_CATALOG)
+    }, (error) => {
+      console.error('Error listening to catalog:', error)
+    })
+
+    return () => unsubscribe()
+  }, [adminLoggedIn])
 
   useEffect(() => {
     let result = [...bookings]
@@ -209,13 +222,16 @@ export default function AdminPage() {
 
   const bulkConfirm = async () => {
     try {
-      const promises = selectedIds.map((id) =>
-        updateBookingStatus(id, 'Confirmed', { waktuKonfirmasi: new Date().toISOString() })
-      )
-      const results = await Promise.all(promises)
-      const successCount = results.filter(Boolean).length
-      await loadData()
-      toast.success(`${successCount} dari ${selectedIds.length} booking dikonfirmasi!`)
+      const promises = selectedIds.map(id => {
+        const bookingRef = doc(db, 'bookings', id)
+        return updateDoc(bookingRef, {
+          status: 'Confirmed',
+          waktuKonfirmasi: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        })
+      })
+      await Promise.all(promises)
+      toast.success(`${selectedIds.length} booking dikonfirmasi!`)
       setSelectedIds([])
       setSelectAll(false)
     } catch (error) {
@@ -226,11 +242,15 @@ export default function AdminPage() {
 
   const bulkComplete = async () => {
     try {
-      const promises = selectedIds.map((id) => updateBookingStatus(id, 'Completed'))
-      const results = await Promise.all(promises)
-      const successCount = results.filter(Boolean).length
-      await loadData()
-      toast.success(`${successCount} dari ${selectedIds.length} booking ditandai selesai!`)
+      const promises = selectedIds.map(id => {
+        const bookingRef = doc(db, 'bookings', id)
+        return updateDoc(bookingRef, {
+          status: 'Completed',
+          updatedAt: new Date().toISOString()
+        })
+      })
+      await Promise.all(promises)
+      toast.success(`${selectedIds.length} booking ditandai selesai!`)
       setSelectedIds([])
       setSelectAll(false)
     } catch (error) {
@@ -241,11 +261,9 @@ export default function AdminPage() {
 
   const bulkDelete = async () => {
     try {
-      const promises = selectedIds.map((id) => deleteBooking(id))
-      const results = await Promise.all(promises)
-      const successCount = results.filter(Boolean).length
-      await loadData()
-      toast.success(`${successCount} dari ${selectedIds.length} booking dihapus!`)
+      const promises = selectedIds.map(id => deleteDoc(doc(db, 'bookings', id)))
+      await Promise.all(promises)
+      toast.success(`${selectedIds.length} booking dihapus!`)
       setSelectedIds([])
       setSelectAll(false)
     } catch (error) {
@@ -256,13 +274,13 @@ export default function AdminPage() {
 
   async function doConfirm(b: Booking) {
     try {
-      const success = await updateBookingStatus(b.id, 'Confirmed', { waktuKonfirmasi: new Date().toISOString() })
-      if (success) {
-        await loadData()
-        toast.success(`Booking ${b.id} dikonfirmasi!`)
-      } else {
-        toast.error('Gagal mengupdate status booking')
-      }
+      const bookingRef = doc(db, 'bookings', b.id)
+      await updateDoc(bookingRef, {
+        status: 'Confirmed',
+        waktuKonfirmasi: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      })
+      toast.success(`Booking ${b.id} dikonfirmasi!`)
     } catch (error) {
       console.error('Error confirming booking:', error)
       toast.error('Gagal mengkonfirmasi booking')
@@ -272,14 +290,13 @@ export default function AdminPage() {
   async function doComplete() {
     if (!completeTarget) return
     try {
-      const success = await updateBookingStatus(completeTarget.id, 'Completed')
-      if (success) {
-        setCompleteTarget(null)
-        await loadData()
-        toast.success('Booking selesai!')
-      } else {
-        toast.error('Gagal mengupdate status booking')
-      }
+      const bookingRef = doc(db, 'bookings', completeTarget.id)
+      await updateDoc(bookingRef, {
+        status: 'Completed',
+        updatedAt: new Date().toISOString()
+      })
+      setCompleteTarget(null)
+      toast.success('Booking selesai!')
     } catch (error) {
       console.error('Error completing booking:', error)
       toast.error('Gagal menyelesaikan booking')
@@ -289,15 +306,15 @@ export default function AdminPage() {
   async function doCancel() {
     if (!cancelTarget) return
     try {
-      const success = await updateBookingStatus(cancelTarget.id, 'Cancelled', { alasanBatal: cancelReason })
-      if (success) {
-        setCancelTarget(null)
-        setCancelReason('')
-        await loadData()
-        toast.success('Booking ditolak.')
-      } else {
-        toast.error('Gagal mengupdate status booking')
-      }
+      const bookingRef = doc(db, 'bookings', cancelTarget.id)
+      await updateDoc(bookingRef, {
+        status: 'Cancelled',
+        alasanBatal: cancelReason,
+        updatedAt: new Date().toISOString()
+      })
+      setCancelTarget(null)
+      setCancelReason('')
+      toast.success('Booking ditolak.')
     } catch (error) {
       console.error('Error cancelling booking:', error)
       toast.error('Gagal menolak booking')
@@ -307,15 +324,11 @@ export default function AdminPage() {
   async function doDelete() {
     if (!deleteTarget) return
     try {
-      const success = await deleteBooking(deleteTarget.id)
-      if (success) {
-        setDeleteTarget(null)
-        if (detailBooking?.id === deleteTarget.id) setDetailBooking(null)
-        await loadData()
-        toast.success('Booking dihapus.')
-      } else {
-        toast.error('Gagal menghapus booking')
-      }
+      const bookingRef = doc(db, 'bookings', deleteTarget.id)
+      await deleteDoc(bookingRef)
+      setDeleteTarget(null)
+      if (detailBooking?.id === deleteTarget.id) setDetailBooking(null)
+      toast.success('Booking dihapus.')
     } catch (error) {
       console.error('Error deleting booking:', error)
       toast.error('Gagal menghapus booking')
@@ -324,7 +337,18 @@ export default function AdminPage() {
 
   async function handleSaveCatalog(updated: CatalogItem[]) {
     try {
-      await saveCatalog(updated)
+      const catalogRef = collection(db, 'catalog')
+      // Clear existing catalog
+      const querySnapshot = await getDocs(catalogRef)
+      const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref))
+      await Promise.all(deletePromises)
+
+      // Add new catalog items
+      const addPromises = updated.map(item =>
+        addDoc(catalogRef, item)
+      )
+      await Promise.all(addPromises)
+
       setCatalog(updated)
       toast.success('Katalog disimpan!')
     } catch (error) {
@@ -359,8 +383,7 @@ export default function AdminPage() {
 
   async function handleResetCatalog() {
     try {
-      await resetCatalog()
-      setCatalog(DEFAULT_CATALOG)
+      await handleSaveCatalog(DEFAULT_CATALOG)
       toast.success('Katalog direset!')
     } catch (error) {
       console.error('Error resetting catalog:', error)
@@ -399,9 +422,10 @@ export default function AdminPage() {
           </div>
           <div className="flex items-center gap-2">
             <DarkModeToggle />
-            <button onClick={() => { loadData(); toast.success('Data diperbarui!') }} className="p-2 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 transition-all">
-              <RefreshCcw size={16} />
-            </button>
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 text-xs">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              Real-time
+            </div>
             <button onClick={handleExport} className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-green-500 text-white text-xs font-medium hover:bg-green-400 transition-all">
               <Download size={14} />Export
             </button>

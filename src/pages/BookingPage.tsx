@@ -4,10 +4,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import Navbar from '../components/GlassNavbar'
 import ScrollReveal from '../components/ScrollReveal'
-import { generateBookingId, saveBooking } from '../lib/storage'
 import { buildBookingMessage, getAdminWaLink } from '../lib/whatsapp'
 import type { Booking, TaskType, UrgencyLevel } from '../lib/types'
 import { PaymentPageInline } from '../components/PaymentInfo'
+import { db } from '../lib/firebase'
+import { collection, addDoc, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore'
 import {
   User, Phone, BookOpen, FileText, Calendar, Zap,
   CheckCircle, ChevronRight, ChevronLeft,
@@ -83,8 +84,21 @@ export default function BookingPage() {
   useEffect(() => {
     const generateId = async () => {
       try {
-        const id = await generateBookingId()
-        setBookingId(id)
+        const counterRef = doc(db, 'counters', 'booking_counter')
+        const counterSnap = await getDoc(counterRef)
+        let currentCounter = 1
+
+        if (counterSnap.exists()) {
+          currentCounter = counterSnap.data().value || 1
+        } else {
+          // Initialize counter if it doesn't exist (use setDoc instead of updateDoc)
+          await setDoc(counterRef, { value: 1 }, { merge: true })
+        }
+
+        // Generate booking ID (don't increment yet, will increment on submit)
+        const year = new Date().getFullYear()
+        const padded = String(currentCounter).padStart(3, '0')
+        setBookingId(`BOOK-${year}-${padded}`)
       } catch (error) {
         console.error('Error generating booking ID:', error)
         // Fallback to local generation
@@ -171,9 +185,27 @@ export default function BookingPage() {
     try {
       setIsSubmitting(true)
       const est = estimatePrice(form.jenistugas, form.urgensi, form.harga)
-      const bookingId = await generateBookingId()
+
+      // Increment counter and get final booking ID
+      const counterRef = doc(db, 'counters', 'booking_counter')
+      const counterSnap = await getDoc(counterRef)
+      let currentCounter = 1
+
+      if (counterSnap.exists()) {
+        currentCounter = counterSnap.data().value || 1
+      }
+
+      const nextCounter = currentCounter + 1
+      // Use setDoc with merge to ensure document exists
+      await setDoc(counterRef, { value: nextCounter }, { merge: true })
+
+      // Generate final booking ID
+      const year = new Date().getFullYear()
+      const padded = String(currentCounter).padStart(3, '0')
+      const finalBookingId = `BOOK-${year}-${padded}`
+
       const booking: Booking = {
-        id: bookingId,
+        id: finalBookingId,
         nama: form.nama.trim(),
         whatsapp: form.whatsapp.trim(),
         jenistugas: form.jenistugas as TaskType,
@@ -186,15 +218,19 @@ export default function BookingPage() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
-      await saveBooking(booking)
+
+      // Save to Firestore directly
+      const bookingsRef = collection(db, 'bookings')
+      await addDoc(bookingsRef, booking)
+
       setBookingResult(booking)
       setSubmitted(true)
       try { localStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
-      toast.success('Booking berhasil!', { description: `Nomor: ${bookingId}` })
+      toast.success('Booking berhasil!', { description: `Nomor: ${finalBookingId}` })
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
       console.error('Error submitting booking:', error)
-      toast.error('Gagal menyimpan booking. Silakan coba lagi.')
+      toast.error('Gagal menyimpan booking. Periksa koneksi internet atau setting Firebase Anda.')
     } finally {
       setIsSubmitting(false)
     }
@@ -316,7 +352,7 @@ export default function BookingPage() {
                       <div className="relative">
                         <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                         <input ref={namaRef} type="text" placeholder="Contoh: Rina Sari" value={form.nama} onChange={(e) => setField('nama', e.target.value)}
-                          className={`w-full pl-9 pr-3 py-2.5 md:py-3 rounded-xl border-2 text-sm outline-none transition-all ${errors.nama ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-purple-400 bg-white hover:border-gray-300'}`} />
+                          className={`w-full pl-9 pr-3 py-2.5 md:py-3 rounded-xl border-2 text-sm outline-none transition-all text-gray-900 dark:text-gray-900 ${errors.nama ? 'border-red-400 bg-red-50 dark:bg-red-100' : 'border-gray-200 focus:border-purple-400 bg-white dark:bg-gray-50 dark:border-gray-300 hover:border-gray-300'}`} />
                       </div>
                       {errors.nama && <p className="mt-1 text-[11px] md:text-xs text-red-500 flex items-center gap-1"><AlertTriangle size={10} />{errors.nama}</p>}
                     </div>
@@ -327,7 +363,7 @@ export default function BookingPage() {
                       <div className="relative">
                         <Phone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                         <input ref={waRef} type="tel" inputMode="tel" placeholder="081295991378" value={form.whatsapp} onChange={(e) => setField('whatsapp', e.target.value)}
-                          className={`w-full pl-9 pr-3 py-2.5 md:py-3 rounded-xl border-2 text-sm outline-none transition-all ${errors.whatsapp ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-purple-400 bg-white hover:border-gray-300'}`} />
+                          className={`w-full pl-9 pr-3 py-2.5 md:py-3 rounded-xl border-2 text-sm outline-none transition-all text-gray-900 dark:text-gray-900 ${errors.whatsapp ? 'border-red-400 bg-red-50 dark:bg-red-100' : 'border-gray-200 focus:border-purple-400 bg-white dark:bg-gray-50 dark:border-gray-300 hover:border-gray-300'}`} />
                       </div>
                       {errors.whatsapp && <p className="mt-1 text-[11px] md:text-xs text-red-500 flex items-center gap-1"><AlertTriangle size={10} />{errors.whatsapp}</p>}
                       <p className="mt-0.5 text-[10px] md:text-xs text-gray-400">Format: 08xxxxxxxxxx</p>
@@ -363,7 +399,7 @@ export default function BookingPage() {
                       <label className="block text-xs md:text-sm font-semibold text-gray-700 mb-1 md:mb-1.5">Deskripsi Tugas <span className="text-red-500">*</span></label>
                       <textarea ref={detailRef} placeholder="Contoh: Makalah 15 halaman tentang perubahan iklim, format APA, daftar pustaka 10 sumber..."
                         value={form.detail} onChange={(e) => setField('detail', e.target.value)} rows={4}
-                        className={`w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 text-sm outline-none resize-none transition-all ${errors.detail ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-purple-400 bg-white hover:border-gray-300'}`} />
+                        className={`w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 text-sm outline-none resize-none transition-all text-gray-900 dark:text-gray-900 ${errors.detail ? 'border-red-400 bg-red-50 dark:bg-red-100' : 'border-gray-200 focus:border-purple-400 bg-white dark:bg-gray-50 dark:border-gray-300 hover:border-gray-300'}`} />
                       <div className="flex justify-between mt-0.5">
                         {errors.detail ? <p className="text-[11px] md:text-xs text-red-500 flex items-center gap-1"><AlertTriangle size={10} />{errors.detail}</p> : <p className="text-[10px] md:text-xs text-gray-400">Min 10 huruf</p>}
                         <p className={`text-[10px] md:text-xs ${form.detail.length < 10 ? 'text-red-400' : 'text-green-500'}`}>{form.detail.length} huruf</p>
@@ -376,7 +412,7 @@ export default function BookingPage() {
                         <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                         <input ref={deadlineRef} type="datetime-local" value={form.deadline}
                           onChange={(e) => setField('deadline', e.target.value)}
-                          className={`w-full pl-9 pr-3 py-2.5 md:py-3 rounded-xl border-2 text-sm outline-none transition-all ${errors.deadline ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-purple-400 bg-white hover:border-gray-300'}`} />
+                          className={`w-full pl-9 pr-3 py-2.5 md:py-3 rounded-xl border-2 text-sm outline-none transition-all text-gray-900 dark:text-gray-900 ${errors.deadline ? 'border-red-400 bg-red-50 dark:bg-red-100' : 'border-gray-200 focus:border-purple-400 bg-white dark:bg-gray-50 dark:border-gray-300 hover:border-gray-300'}`} />
                       </div>
                       {errors.deadline && <p className="mt-1 text-[11px] md:text-xs text-red-500 flex items-center gap-1"><AlertTriangle size={10} />{errors.deadline}</p>}
                     </div>
@@ -400,7 +436,7 @@ export default function BookingPage() {
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-gray-500">Rp</span>
                         <input type="number" inputMode="numeric" placeholder="Kosongkan jika belum disepakati" value={form.harga} onChange={(e) => setField('harga', e.target.value)}
-                          className="w-full pl-8 pr-3 py-2.5 md:py-3 rounded-xl border-2 border-gray-200 focus:border-purple-400 text-sm outline-none transition-all" />
+                          className="w-full pl-8 pr-3 py-2.5 md:py-3 rounded-xl border-2 border-gray-200 focus:border-purple-400 bg-white dark:bg-gray-50 dark:border-gray-300 dark:text-gray-900 text-sm outline-none transition-all" />
                       </div>
                       {estPrice && !form.harga && <p className="mt-1 text-[10px] md:text-xs text-purple-600">Estimasi: Rp {estPrice.toLocaleString('id-ID')}</p>}
                     </div>
@@ -408,7 +444,7 @@ export default function BookingPage() {
                     <div>
                       <label className="block text-xs md:text-sm font-semibold text-gray-700 mb-1 md:mb-1.5">Catatan <span className="text-gray-400 font-normal">(opsional)</span></label>
                       <textarea placeholder="Kebutuhan khusus, referensi..." value={form.catatan} onChange={(e) => setField('catatan', e.target.value)} rows={2}
-                        className="w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 border-gray-200 focus:border-purple-400 text-sm outline-none resize-none transition-all" />
+                        className="w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl border-2 border-gray-200 focus:border-purple-400 bg-white dark:bg-gray-50 dark:border-gray-300 dark:text-gray-900 text-sm outline-none resize-none transition-all" />
                     </div>
                   </motion.div>
                 )}

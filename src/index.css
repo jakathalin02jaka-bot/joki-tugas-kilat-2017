@@ -78,6 +78,11 @@
   input, textarea, select, button {
     font-family: 'Poppins', sans-serif;
   }
+  /* Input placeholder styling for dark mode */
+  input::placeholder,
+  textarea::placeholder {
+    @apply text-gray-500 dark:text-gray-400;
+  }
 }
 
 /* Smooth scroll */

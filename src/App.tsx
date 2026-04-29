@@ -9,6 +9,7 @@ import PaymentPage from './pages/PaymentPage'
 import ScrollProgress from './components/ScrollProgress'
 import BackToTop from './components/BackToTop'
 import BottomNav from './components/BottomNav'
+import ErrorBoundary from './components/ErrorBoundary'
 
 const pageVariants = {
   initial: { opacity: 0, y: 16 },
@@ -29,7 +30,7 @@ function App() {
   const isAdmin = location.pathname === '/admin'
 
   return (
-    <>
+    <ErrorBoundary>
       <ScrollProgress />
       <BackToTop />
       <AnimatePresence mode="wait">
@@ -43,7 +44,7 @@ function App() {
         </Routes>
       </AnimatePresence>
       {!isAdmin && <BottomNav />}
-    </>
+    </ErrorBoundary>
   )
 }
 
