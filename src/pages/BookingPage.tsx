@@ -76,7 +76,25 @@ export default function BookingPage() {
   const [submitted, setSubmitted] = useState(false)
   const [bookingResult, setBookingResult] = useState<Booking | null>(null)
   const [copied, setCopied] = useState(false)
-  const [bookingId] = useState(() => generateBookingId())
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [bookingId, setBookingId] = useState<string>('')
+
+  // Generate booking ID on component mount
+  useEffect(() => {
+    const generateId = async () => {
+      try {
+        const id = await generateBookingId()
+        setBookingId(id)
+      } catch (error) {
+        console.error('Error generating booking ID:', error)
+        // Fallback to local generation
+        const year = new Date().getFullYear()
+        const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
+        setBookingId(`BOOK-${year}-${random}`)
+      }
+    }
+    generateId()
+  }, [])
 
   // Field refs for auto-focus
   const namaRef = useRef<HTMLInputElement>(null)
@@ -149,28 +167,37 @@ export default function BookingPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const handleSubmit = () => {
-    const est = estimatePrice(form.jenistugas, form.urgensi, form.harga)
-    const booking: Booking = {
-      id: bookingId,
-      nama: form.nama.trim(),
-      whatsapp: form.whatsapp.trim(),
-      jenistugas: form.jenistugas as TaskType,
-      detail: form.detail.trim(),
-      deadline: new Date(form.deadline).toISOString(),
-      urgensi: form.urgensi,
-      harga: est ?? 0,
-      catatan: form.catatan.trim(),
-      status: 'Pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+  const handleSubmit = async () => {
+    try {
+      setIsSubmitting(true)
+      const est = estimatePrice(form.jenistugas, form.urgensi, form.harga)
+      const bookingId = await generateBookingId()
+      const booking: Booking = {
+        id: bookingId,
+        nama: form.nama.trim(),
+        whatsapp: form.whatsapp.trim(),
+        jenistugas: form.jenistugas as TaskType,
+        detail: form.detail.trim(),
+        deadline: new Date(form.deadline).toISOString(),
+        urgensi: form.urgensi,
+        harga: est ?? 0,
+        catatan: form.catatan.trim(),
+        status: 'Pending',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+      await saveBooking(booking)
+      setBookingResult(booking)
+      setSubmitted(true)
+      try { localStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
+      toast.success('Booking berhasil!', { description: `Nomor: ${bookingId}` })
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (error) {
+      console.error('Error submitting booking:', error)
+      toast.error('Gagal menyimpan booking. Silakan coba lagi.')
+    } finally {
+      setIsSubmitting(false)
     }
-    saveBooking(booking)
-    setBookingResult(booking)
-    setSubmitted(true)
-    try { localStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
-    toast.success('Booking berhasil!', { description: `Nomor: ${bookingId}` })
-    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const estPrice = estimatePrice(form.jenistugas, form.urgensi, form.harga)
@@ -435,8 +462,22 @@ export default function BookingPage() {
                     Lanjut<ChevronRight size={14} />
                   </motion.button>
                 ) : (
-                  <motion.button whileTap={{ scale: 0.97 }} onClick={handleSubmit} className="flex-1 flex items-center justify-center gap-1 md:gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold py-2.5 md:py-3 rounded-xl text-xs md:text-sm transition-all shadow-md shadow-green-300/30">
-                    <Zap size={14} />Kirim Booking
+                  <motion.button
+                    whileTap={{ scale: 0.97 }}
+                    onClick={handleSubmit}
+                    disabled={isSubmitting}
+                    className="flex-1 flex items-center justify-center gap-1 md:gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-2.5 md:py-3 rounded-xl text-xs md:text-sm transition-all shadow-md shadow-green-300/30 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                        Mengirim...
+                      </>
+                    ) : (
+                      <>
+                        <Zap size={14} />Kirim Booking
+                      </>
+                    )}
                   </motion.button>
                 )}
               </div>

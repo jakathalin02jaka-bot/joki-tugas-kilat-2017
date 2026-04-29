@@ -145,14 +145,27 @@ export default function AdminPage() {
   const [selectAll, setSelectAll] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
 
-  const loadData = useCallback(() => {
-    const data = getAllBookings().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    setBookings(data)
-    setLastRefresh(new Date())
+  const loadData = useCallback(async () => {
+    try {
+      const data = await getAllBookings()
+      const sortedData = data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      setBookings(sortedData)
+      setLastRefresh(new Date())
+    } catch (error) {
+      console.error('Error loading bookings:', error)
+      toast.error('Gagal memuat data booking')
+    }
   }, [])
 
   useEffect(() => {
-    if (adminLoggedIn) { loadData(); setCatalog(getCatalog()) }
+    const loadInitialData = async () => {
+      if (adminLoggedIn) {
+        await loadData()
+        const catalogData = await getCatalog()
+        setCatalog(catalogData)
+      }
+    }
+    loadInitialData()
   }, [adminLoggedIn, loadData])
 
   // Auto refresh every 30 seconds
@@ -194,47 +207,166 @@ export default function AdminPage() {
     else { setSelectedIds(filtered.map((b) => b.id)); setSelectAll(true) }
   }
 
-  const bulkConfirm = () => {
-    selectedIds.forEach((id) => {
-      updateBookingStatus(id, 'Confirmed', { waktuKonfirmasi: new Date().toISOString() })
-    })
-    loadData()
-    toast.success(`${selectedIds.length} booking dikonfirmasi!`)
-    setSelectedIds([])
-    setSelectAll(false)
+  const bulkConfirm = async () => {
+    try {
+      const promises = selectedIds.map((id) =>
+        updateBookingStatus(id, 'Confirmed', { waktuKonfirmasi: new Date().toISOString() })
+      )
+      const results = await Promise.all(promises)
+      const successCount = results.filter(Boolean).length
+      await loadData()
+      toast.success(`${successCount} dari ${selectedIds.length} booking dikonfirmasi!`)
+      setSelectedIds([])
+      setSelectAll(false)
+    } catch (error) {
+      console.error('Error bulk confirming:', error)
+      toast.error('Gagal mengkonfirmasi booking secara bulk')
+    }
   }
 
-  const bulkComplete = () => {
-    selectedIds.forEach((id) => updateBookingStatus(id, 'Completed'))
-    loadData()
-    toast.success(`${selectedIds.length} booking ditandai selesai!`)
-    setSelectedIds([])
-    setSelectAll(false)
+  const bulkComplete = async () => {
+    try {
+      const promises = selectedIds.map((id) => updateBookingStatus(id, 'Completed'))
+      const results = await Promise.all(promises)
+      const successCount = results.filter(Boolean).length
+      await loadData()
+      toast.success(`${successCount} dari ${selectedIds.length} booking ditandai selesai!`)
+      setSelectedIds([])
+      setSelectAll(false)
+    } catch (error) {
+      console.error('Error bulk completing:', error)
+      toast.error('Gagal menyelesaikan booking secara bulk')
+    }
   }
 
-  const bulkDelete = () => {
-    selectedIds.forEach((id) => deleteBooking(id))
-    loadData()
-    toast.success(`${selectedIds.length} booking dihapus!`)
-    setSelectedIds([])
-    setSelectAll(false)
+  const bulkDelete = async () => {
+    try {
+      const promises = selectedIds.map((id) => deleteBooking(id))
+      const results = await Promise.all(promises)
+      const successCount = results.filter(Boolean).length
+      await loadData()
+      toast.success(`${successCount} dari ${selectedIds.length} booking dihapus!`)
+      setSelectedIds([])
+      setSelectAll(false)
+    } catch (error) {
+      console.error('Error bulk deleting:', error)
+      toast.error('Gagal menghapus booking secara bulk')
+    }
   }
 
-  function doConfirm(b: Booking) {
-    updateBookingStatus(b.id, 'Confirmed', { waktuKonfirmasi: new Date().toISOString() })
-    loadData()
-    toast.success(`Booking ${b.id} dikonfirmasi!`)
+  async function doConfirm(b: Booking) {
+    try {
+      const success = await updateBookingStatus(b.id, 'Confirmed', { waktuKonfirmasi: new Date().toISOString() })
+      if (success) {
+        await loadData()
+        toast.success(`Booking ${b.id} dikonfirmasi!`)
+      } else {
+        toast.error('Gagal mengupdate status booking')
+      }
+    } catch (error) {
+      console.error('Error confirming booking:', error)
+      toast.error('Gagal mengkonfirmasi booking')
+    }
   }
-  function doComplete() { if (!completeTarget) return; updateBookingStatus(completeTarget.id, 'Completed'); setCompleteTarget(null); loadData(); toast.success('Booking selesai!') }
-  function doCancel() { if (!cancelTarget) return; updateBookingStatus(cancelTarget.id, 'Cancelled', { alasanBatal: cancelReason }); setCancelTarget(null); setCancelReason(''); loadData(); toast.success('Booking ditolak.') }
-  function doDelete() { if (!deleteTarget) return; deleteBooking(deleteTarget.id); setDeleteTarget(null); if (detailBooking?.id === deleteTarget.id) setDetailBooking(null); loadData(); toast.success('Booking dihapus.') }
 
-  function handleSaveCatalog(updated: CatalogItem[]) { saveCatalog(updated); setCatalog(updated); toast.success('Katalog disimpan!') }
-  function handleToggleActive(id: string) { const updated = catalog.map((c) => c.id === id ? { ...c, active: !c.active } : c); handleSaveCatalog(updated) }
-  function handleDeleteCatalogItem(id: string) { const updated = catalog.filter((c) => c.id !== id); handleSaveCatalog(updated) }
-  function handleUpdateItem(item: CatalogItem) { const updated = catalog.map((c) => c.id === item.id ? item : c); handleSaveCatalog(updated); setEditingItem(null) }
-  function handleAddItem() { if (!newItem.label.trim() || newItem.basePrice <= 0) return; const item: CatalogItem = { ...newItem, id: `custom_${Date.now()}` }; handleSaveCatalog([...catalog, item]); setNewItem({ id: '', label: '', desc: '', basePrice: 5000, fixed: false, unit: 'halaman', active: true }); setShowAddForm(false) }
-  function handleResetCatalog() { resetCatalog(); setCatalog(DEFAULT_CATALOG); toast.success('Katalog direset!') }
+  async function doComplete() {
+    if (!completeTarget) return
+    try {
+      const success = await updateBookingStatus(completeTarget.id, 'Completed')
+      if (success) {
+        setCompleteTarget(null)
+        await loadData()
+        toast.success('Booking selesai!')
+      } else {
+        toast.error('Gagal mengupdate status booking')
+      }
+    } catch (error) {
+      console.error('Error completing booking:', error)
+      toast.error('Gagal menyelesaikan booking')
+    }
+  }
+
+  async function doCancel() {
+    if (!cancelTarget) return
+    try {
+      const success = await updateBookingStatus(cancelTarget.id, 'Cancelled', { alasanBatal: cancelReason })
+      if (success) {
+        setCancelTarget(null)
+        setCancelReason('')
+        await loadData()
+        toast.success('Booking ditolak.')
+      } else {
+        toast.error('Gagal mengupdate status booking')
+      }
+    } catch (error) {
+      console.error('Error cancelling booking:', error)
+      toast.error('Gagal menolak booking')
+    }
+  }
+
+  async function doDelete() {
+    if (!deleteTarget) return
+    try {
+      const success = await deleteBooking(deleteTarget.id)
+      if (success) {
+        setDeleteTarget(null)
+        if (detailBooking?.id === deleteTarget.id) setDetailBooking(null)
+        await loadData()
+        toast.success('Booking dihapus.')
+      } else {
+        toast.error('Gagal menghapus booking')
+      }
+    } catch (error) {
+      console.error('Error deleting booking:', error)
+      toast.error('Gagal menghapus booking')
+    }
+  }
+
+  async function handleSaveCatalog(updated: CatalogItem[]) {
+    try {
+      await saveCatalog(updated)
+      setCatalog(updated)
+      toast.success('Katalog disimpan!')
+    } catch (error) {
+      console.error('Error saving catalog:', error)
+      toast.error('Gagal menyimpan katalog')
+    }
+  }
+
+  function handleToggleActive(id: string) {
+    const updated = catalog.map((c) => c.id === id ? { ...c, active: !c.active } : c)
+    handleSaveCatalog(updated)
+  }
+
+  function handleDeleteCatalogItem(id: string) {
+    const updated = catalog.filter((c) => c.id !== id)
+    handleSaveCatalog(updated)
+  }
+
+  function handleUpdateItem(item: CatalogItem) {
+    const updated = catalog.map((c) => c.id === item.id ? item : c)
+    handleSaveCatalog(updated)
+    setEditingItem(null)
+  }
+
+  function handleAddItem() {
+    if (!newItem.label.trim() || newItem.basePrice <= 0) return
+    const item: CatalogItem = { ...newItem, id: `custom_${Date.now()}` }
+    handleSaveCatalog([...catalog, item])
+    setNewItem({ id: '', label: '', desc: '', basePrice: 5000, fixed: false, unit: 'halaman', active: true })
+    setShowAddForm(false)
+  }
+
+  async function handleResetCatalog() {
+    try {
+      await resetCatalog()
+      setCatalog(DEFAULT_CATALOG)
+      toast.success('Katalog direset!')
+    } catch (error) {
+      console.error('Error resetting catalog:', error)
+      toast.error('Gagal mereset katalog')
+    }
+  }
   function handleExport() { const csv = exportToCSV(filtered); const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `bookings-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(url); toast.success(`Export ${filtered.length} data`) }
 
   function formatRupiah(n: number) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n) }

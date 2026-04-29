@@ -77,29 +77,40 @@ export default function TrackPage() {
   const [searched, setSearched] = useState(!!initialId)
   const [loading, setLoading] = useState(false)
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!input.trim()) { toast.error('Masukkan nomor booking'); return }
     setLoading(true)
-    setTimeout(() => {
-      const found = getBookingById(input.trim().toUpperCase())
+    try {
+      const found = await getBookingById(input.trim().toUpperCase())
       setBooking(found)
       setSearched(true)
-      setLoading(false)
       if (!found) toast.error('Booking tidak ditemukan')
       else toast.success('Booking ditemukan!')
-    }, 600)
+    } catch (error) {
+      console.error('Error searching booking:', error)
+      toast.error('Gagal mencari booking')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
-    if (initialId) {
-      setLoading(true)
-      setTimeout(() => {
-        const found = getBookingById(initialId.trim().toUpperCase())
-        setBooking(found)
-        setSearched(true)
-        setLoading(false)
-      }, 600)
+    const searchInitial = async () => {
+      if (initialId) {
+        setLoading(true)
+        try {
+          const found = await getBookingById(initialId.trim().toUpperCase())
+          setBooking(found)
+          setSearched(true)
+        } catch (error) {
+          console.error('Error searching initial booking:', error)
+          toast.error('Gagal memuat booking')
+        } finally {
+          setLoading(false)
+        }
+      }
     }
+    searchInitial()
   }, [initialId])
 
   const cfg = booking ? statusConfig[booking.status] : null

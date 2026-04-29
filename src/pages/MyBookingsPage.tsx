@@ -109,18 +109,22 @@ export default function MyBookingsPage() {
     return acc
   }, {} as Record<string, number>)
 
-  function handleSearch() {
+  async function handleSearch() {
     if (!wa.trim()) { toast.error('Masukkan nomor WhatsApp'); return }
     setLoading(true)
-    setTimeout(() => {
-      const results = getBookingsByWhatsApp(wa)
+    try {
+      const results = await getBookingsByWhatsApp(wa)
       const sorted = [...results].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       setBookings(sorted)
       setSearched(true)
-      setLoading(false)
       if (sorted.length === 0) toast.info('Tidak ada booking ditemukan untuk nomor ini')
       else toast.success(`${sorted.length} booking ditemukan!`)
-    }, 500)
+    } catch (error) {
+      console.error('Error searching bookings:', error)
+      toast.error('Gagal mencari booking')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
